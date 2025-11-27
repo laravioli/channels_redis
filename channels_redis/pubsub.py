@@ -162,6 +162,16 @@ class RedisPubSubLoopLayer:
         await self._subscribe_to_channel(channel)
         return channel
 
+    async def clean_channel(self, channel):
+        if channel in self.channels:
+            del self.channels[channel]
+            try:
+                shard = self._get_shard(channel)
+                await shard.unsubscribe(channel)
+            except BaseException:
+                logger.exception("Unexpected exception while cleaning-up channel:")
+                # We don't re-raise here because we want the CancelledError to be the one re-raised.
+
     async def receive(self, channel):
         """
         Receive the first message that arrives on the channel.
@@ -172,26 +182,8 @@ class RedisPubSubLoopLayer:
             await self._subscribe_to_channel(channel)
 
         q = self.channels[channel]
-        try:
-            message = await q.get()
-        except (asyncio.CancelledError, asyncio.TimeoutError, GeneratorExit):
-            # We assume here that the reason we are cancelled is because the consumer
-            # is exiting, therefore we need to cleanup by unsubscribe below. Indeed,
-            # currently the way that Django Channels works, this is a safe assumption.
-            # In the future, Django Channels could change to call a *new* method that
-            # would serve as the antithesis of `new_channel()`; this new method might
-            # be named `delete_channel()`. If that were the case, we would do the
-            # following cleanup from that new `delete_channel()` method, but, since
-            # that's not how Django Channels works (yet), we do the cleanup below:
-            if channel in self.channels:
-                del self.channels[channel]
-                try:
-                    shard = self._get_shard(channel)
-                    await shard.unsubscribe(channel)
-                except BaseException:
-                    logger.exception("Unexpected exception while cleaning-up channel:")
-                    # We don't re-raise here because we want the CancelledError to be the one re-raised.
-            raise
+        message = await q.get()
+        # cleanup should be consumer responsability
 
         return self.channel_layer.deserialize(message)
 
